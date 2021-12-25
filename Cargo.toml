@@ -1,0 +1,10 @@
+[package]
+name = "mqtt-fed"
+description = "A federator for MQTT brokers."
+version = "0.1.0"
+license = "Apache-2.0"
+authors = ["Nicolas K. Ribas <nicolaskribas@gmail.com>"]
+repository = "https://github.com/nicolaskribas/mqtt-fed"
+edition = "2021"
+
+[dependencies]
