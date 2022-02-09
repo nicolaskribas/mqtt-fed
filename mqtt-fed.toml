@@ -1,0 +1,17 @@
+# Example config file 
+
+redundancy = 2
+core_ann_interval = 10
+beacon_interval = 5
+
+[host]
+id = 1
+uri = "tcp://localhost:1881"
+
+[[neighbours]]
+id = 2
+uri = "tcp://localhost:1882"
+
+[[neighbours]]
+id = 4
+uri = "tcp://localhost:1884"
