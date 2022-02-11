@@ -94,3 +94,19 @@ impl fmt::Display for MessageError {
 }
 
 impl std::error::Error for MessageError {}
+
+impl Message {
+    pub(crate) fn is_core_ann(&self) -> bool {
+        match self {
+            Message::CoreAnn(_) => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn is_beacon(&self) -> bool {
+        match self {
+            Message::Beacon => true,
+            _ => false,
+        }
+    }
+}

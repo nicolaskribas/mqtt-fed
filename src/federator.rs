@@ -87,20 +87,30 @@ impl Federator {
         while let Some(mqtt_msg) = rx.recv().await {
             match message::deserialize(mqtt_msg) {
                 Ok((topic, message)) => {
-                    if !self.handlers.contains_key(&topic) {
-                        let tx = self.spawn_handler_for(&topic);
-                        self.handlers.insert(topic.clone(), tx);
-                    }
-
-                    let handler = self.handlers.get(&topic).unwrap();
-
-                    if let Err(err) = handler.try_send(message) {
-                        match err {
-                            TrySendError::Full(_) => {
-                                warn!("channel is full, droping message for \"{topic}\"")
+                    if let Some(handler) = self.handlers.get(&topic) {
+                        if let Err(err) = handler.try_send(message) {
+                            match err {
+                                TrySendError::Full(_) => {
+                                    warn!("channel is full, droping message for \"{topic}\"")
+                                }
+                                TrySendError::Closed(_) => {
+                                    error!("channel for \"{topic}\" was closed")
+                                }
                             }
-                            TrySendError::Closed(_) => error!("channel for \"{topic}\" was closed"),
                         }
+                    } else if message.is_core_ann() || message.is_beacon() {
+                        let tx = self.spawn_handler_for(&topic);
+                        if let Err(err) = tx.try_send(message) {
+                            match err {
+                                TrySendError::Full(_) => {
+                                    warn!("channel is full, droping message for \"{topic}\"")
+                                }
+                                TrySendError::Closed(_) => {
+                                    error!("channel for \"{topic}\" was closed")
+                                }
+                            }
+                        }
+                        self.handlers.insert(topic.clone(), tx);
                     }
                 }
                 Err(err) => info!("unable to deserialize message: {err}"),
