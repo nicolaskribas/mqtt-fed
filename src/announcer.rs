@@ -17,8 +17,8 @@ impl Announcer {
         let mut interval = time::interval(ctx.core_ann_interval);
         let mut ann = CoreAnn {
             core_id: ctx.id,
-            seq_number: 0,
-            dist_to_core: 0,
+            seqn: 0,
+            dist: 0,
             sender_id: ctx.id,
         };
 
@@ -35,7 +35,7 @@ impl Announcer {
                     neighbour.publish(core_ann.clone());
                 }
 
-                ann.seq_number += 1;
+                ann.seqn += 1;
             }
         });
 

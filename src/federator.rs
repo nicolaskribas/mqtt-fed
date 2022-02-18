@@ -1,5 +1,5 @@
-use crate::conf::FederatorConfig;
-use crate::handler::Handler;
+use crate::conf::{BrokerConfig, FederatorConfig};
+use crate::handler::TopicHandler;
 use crate::message::{self, Message};
 use crate::topic::{BEACONS, CORE_ANNS, FEDERATED_TOPICS, MEMB_ANNS};
 use mqtt::ConnectOptionsBuilder;
@@ -35,9 +35,14 @@ pub(crate) struct Federator {
 pub(crate) fn run(conf: FederatorConfig) -> Result<(), mqtt::Error> {
     let client_id = format!("federator-{id}", id = conf.host.id);
 
+    info!(
+        "starting {}. redundancy: {}, beacon interval: {}s, core announcements interval: {}s.",
+        client_id, conf.redundancy, conf.beacon_interval, conf.core_ann_interval
+    );
+
     let mut neighbours = HashMap::new();
     for neighbour in conf.neighbours {
-        let client = create_neighbour_client(neighbour.uri, &client_id)?;
+        let client = create_neighbour_client(&neighbour, &client_id)?;
         neighbours.insert(neighbour.id, client);
     }
 
@@ -142,12 +147,10 @@ impl Federator {
     }
 
     async fn subscribe_to_topics(&self) {
-        self.host_client
-            .subscribe_many(
-                &vec![CORE_ANNS, MEMB_ANNS, FEDERATED_TOPICS, BEACONS],
-                &vec![HOST_QOS, HOST_QOS, HOST_QOS, HOST_QOS],
-            )
-            .await;
+        let topics = vec![CORE_ANNS, MEMB_ANNS, FEDERATED_TOPICS, BEACONS];
+        let qoss = vec![HOST_QOS, HOST_QOS, HOST_QOS, HOST_QOS];
+        self.host_client.subscribe_many(&topics, &qoss).await;
+        info!("subscribed to {:?}", topics);
     }
 
     fn spawn_handler_for(&self, topic: &str) -> Sender<Message> {
@@ -155,7 +158,7 @@ impl Federator {
 
         let (tx, rx) = mpsc::channel(HANDLER_BUFFER_SIZE);
 
-        let mut handler = Handler::new(topic.to_owned(), self.ctx.clone(), rx);
+        let mut handler = TopicHandler::new(topic.to_owned(), self.ctx.clone(), rx);
         tokio::spawn(async move { handler.start().await });
 
         tx
@@ -187,9 +190,12 @@ fn new_host_client(uri: String, client_id: &str) -> Result<mqtt::AsyncClient, mq
     Ok(client)
 }
 
-fn create_neighbour_client(uri: String, client_id: &str) -> Result<mqtt::AsyncClient, mqtt::Error> {
+fn create_neighbour_client(
+    config: &BrokerConfig,
+    client_id: &str,
+) -> Result<mqtt::AsyncClient, mqtt::Error> {
     let opts = mqtt::CreateOptionsBuilder::new()
-        .server_uri(uri)
+        .server_uri(&config.uri)
         .client_id(client_id)
         .persistence(None)
         .max_buffered_messages(25)
@@ -198,7 +204,11 @@ fn create_neighbour_client(uri: String, client_id: &str) -> Result<mqtt::AsyncCl
         .delete_oldest_messages(true)
         .finalize();
 
-    let client = mqtt::AsyncClient::new(opts)?;
+    let mut client = mqtt::AsyncClient::new(opts)?;
+
+    let id = config.id;
+    client.set_connected_callback(move |_| info!("connected to neighbour broker {}", id));
+    client.set_connection_lost_callback(move |_| warn!("connection to neighbour broker {}", id));
 
     Ok(client)
 }

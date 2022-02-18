@@ -7,11 +7,10 @@ mod conf;
 mod federator;
 mod handler;
 mod message;
-mod parents;
 mod topic;
 
 fn main() {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt().without_time().init();
 
     let Args { config_file } = Args::parse();
 

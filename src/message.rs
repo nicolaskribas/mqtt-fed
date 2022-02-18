@@ -14,15 +14,15 @@ pub(crate) enum Message {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct CoreAnn {
     pub core_id: u32,
-    pub seq_number: u32,
-    pub dist_to_core: u32,
+    pub seqn: u32,
+    pub dist: u32,
     pub sender_id: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct MeshMembAnn {
     pub core_id: u32,
-    pub seq_number: u32,
+    pub seqn: u32,
     pub sender_id: u32,
 }
 
