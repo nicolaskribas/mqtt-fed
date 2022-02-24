@@ -3,6 +3,7 @@
 redundancy = 2
 core_ann_interval = 10
 beacon_interval = 5
+cache_size = 5000
 
 [host]
 id = 1

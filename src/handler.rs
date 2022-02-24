@@ -1,11 +1,16 @@
-use crate::announcer::Announcer;
-use crate::federator::{Context, Id};
-use crate::message::{CoreAnn, MeshMembAnn, Message};
+use crate::{
+    announcer::Announcer,
+    federator::{Context, Id},
+    message::{CoreAnn, MeshMembAnn, Message, PubId, RoutedPub, FEDERATED_TOPICS_LEVEL},
+};
+use lru::LruCache;
 use paho_mqtt as mqtt;
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::mpsc;
 use tracing::{info, trace, warn};
 
@@ -13,6 +18,8 @@ pub(crate) struct TopicHandler {
     topic: String,
     ctx: Arc<Context>,
     rx: mpsc::Receiver<Message>,
+    cache: LruCache<PubId, ()>,
+    next_id: u32,
     latest_beacon: Option<Instant>,
     current_core: Option<Core>,
     children: HashMap<Id, Instant>,
@@ -41,18 +48,21 @@ struct Parent {
 impl TopicHandler {
     pub(crate) fn new(topic: String, ctx: Arc<Context>, rx: mpsc::Receiver<Message>) -> Self {
         Self {
+            children: HashMap::new(),
+            cache: LruCache::new(ctx.cache_size),
+            latest_beacon: None,
+            current_core: None,
+            next_id: 0,
             topic,
             ctx,
             rx,
-            latest_beacon: None,
-            current_core: None,
-            children: HashMap::new(),
         }
     }
 
     pub(crate) async fn start(&mut self) {
         while let Some(message) = self.rx.recv().await {
             match message {
+                Message::RoutedPub(routing_pub) => self.handle_routed_pub(routing_pub).await,
                 Message::FederatedPub(message) => self.handle_publication(message).await,
                 Message::CoreAnn(core_ann) => self.handle_core_ann(core_ann).await,
                 Message::MeshMembAnn(memb_ann) => self.handle_memb_ann(memb_ann).await,
@@ -61,11 +71,85 @@ impl TopicHandler {
         }
     }
 
-    // #[instrument(skip_all)]
-    async fn handle_publication(&self, _message: mqtt::Message) {
-        info!("not routing yet");
+    async fn handle_routed_pub(&mut self, routed_pub: RoutedPub) {
+        info!("received pub being routed: {:?}", routed_pub);
+
+        if self.cache.contains(&routed_pub.id) {
+            return;
+        }
+
+        self.cache.put(routed_pub.id, ());
+
+        if self.has_local_sub() {
+            let message = mqtt::MessageBuilder::new()
+                .payload(&*routed_pub.payload)
+                .topic(format!("{}{}", FEDERATED_TOPICS_LEVEL, self.topic))
+                .finalize();
+
+            self.ctx.host_client.publish(message);
+        }
+
+        if let Some(core) = filter_valid(self.current_core.as_mut(), self.ctx.core_ann_interval) {
+            let routing_pub = routed_pub.serialize(&self.topic);
+
+            if let Core::Other(core) = core {
+                let ngbr = self.ctx.neighbours.read().await;
+                for parent in &core.parents {
+                    if let Some(ngbr_client) = ngbr.get(&parent.id) {
+                        ngbr_client.publish(routing_pub.clone());
+                    }
+                }
+            }
+
+            let ngbr = self.ctx.neighbours.read().await;
+            for (id, time) in &self.children {
+                if time.elapsed() < 3 * self.ctx.core_ann_interval {
+                    if let Some(client) = ngbr.get(id) {
+                        client.publish(routing_pub.clone());
+                    }
+                }
+            }
+        }
     }
 
+    // #[instrument(skip_all)]
+    async fn handle_publication(&mut self, message: mqtt::Message) {
+        info!("client published a message");
+        if let Some(core) = filter_valid(self.current_core.as_mut(), self.ctx.core_ann_interval) {
+            let new_id = PubId {
+                origin: self.ctx.id,
+                seqn: self.next_id,
+            };
+
+            self.next_id += 1;
+
+            let routed_pub = RoutedPub {
+                id: new_id,
+                payload: message.payload().to_owned(),
+            }
+            .serialize(&self.topic);
+
+            self.cache.put(new_id, ());
+
+            if let Core::Other(core) = core {
+                let ngbr = self.ctx.neighbours.read().await;
+                for parent in &core.parents {
+                    if let Some(ngbr_client) = ngbr.get(&parent.id) {
+                        ngbr_client.publish(routed_pub.clone());
+                    }
+                }
+            }
+
+            let ngbr = self.ctx.neighbours.read().await;
+            for (id, time) in &self.children {
+                if time.elapsed() < 3 * self.ctx.core_ann_interval {
+                    if let Some(client) = ngbr.get(id) {
+                        client.publish(routed_pub.clone());
+                    }
+                }
+            }
+        }
+    }
 
     // #[instrument(skip(self))]
     async fn handle_core_ann(&mut self, core_ann: CoreAnn) {

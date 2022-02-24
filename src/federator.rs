@@ -1,14 +1,14 @@
-use crate::conf::{BrokerConfig, FederatorConfig};
-use crate::handler::TopicHandler;
-use crate::message::{self, Message};
-use crate::topic::{BEACONS, CORE_ANNS, FEDERATED_TOPICS, MEMB_ANNS};
-use mqtt::ConnectOptionsBuilder;
+use crate::{
+    conf::{BrokerConfig, FederatorConfig},
+    handler::TopicHandler,
+    message::{self, Message, BEACONS, CORE_ANNS, FEDERATED_TOPICS, MEMB_ANNS, ROUTING_TOPICS},
+};
 use paho_mqtt as mqtt;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::mpsc::{error::TrySendError, Sender};
-use tokio::sync::{mpsc, RwLock};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::sync::{
+    mpsc::{self, error::TrySendError, Sender},
+    RwLock,
+};
 use tracing::{error, info, warn};
 
 const BUFFER_SIZE: usize = 256;
@@ -23,137 +23,127 @@ pub(crate) struct Context {
     pub(crate) core_ann_interval: Duration,
     pub(crate) beacon_interval: Duration,
     pub(crate) redundancy: usize,
+    pub(crate) cache_size: usize,
     pub(crate) neighbours: RwLock<HashMap<Id, mqtt::AsyncClient>>,
+    pub(crate) host_client: mqtt::AsyncClient,
 }
 
 pub(crate) struct Federator {
-    host_client: mqtt::AsyncClient,
     ctx: Arc<Context>,
     handlers: HashMap<String, mpsc::Sender<Message>>,
+    msg_stream: mqtt::AsyncReceiver<Option<mqtt::Message>>,
 }
 
 pub(crate) fn run(conf: FederatorConfig) -> Result<(), mqtt::Error> {
-    let client_id = format!("federator-{id}", id = conf.host.id);
-
     info!(
-        "starting {}. redundancy: {}, beacon interval: {}s, core announcements interval: {}s.",
-        client_id, conf.redundancy, conf.beacon_interval, conf.core_ann_interval
+        "Starting federator {}. Redundancy: {}, Beacon interval: {}s, Core announcements interval: {}s.",
+        conf.host.id, conf.redundancy, conf.beacon_interval, conf.core_ann_interval
     );
 
-    let mut neighbours = HashMap::new();
-    for neighbour in conf.neighbours {
-        let client = create_neighbour_client(&neighbour, &client_id)?;
-        neighbours.insert(neighbour.id, client);
-    }
+    let neighbors_clients = create_neigbours_clients(conf.neighbours);
+
+    let mut host_client = new_host_client(conf.host.uri)?;
+    let rx = host_client.get_stream(BUFFER_SIZE);
 
     let ctx = Context {
         id: conf.host.id,
         core_ann_interval: Duration::from_secs(conf.core_ann_interval),
         beacon_interval: Duration::from_secs(conf.beacon_interval),
         redundancy: conf.redundancy,
-        neighbours: RwLock::new(neighbours),
+        neighbours: RwLock::new(neighbors_clients),
+        cache_size: conf.cache_size,
+        host_client,
     };
 
     let mut federator = Federator {
-        host_client: new_host_client(conf.host.uri, &client_id)?,
         ctx: Arc::new(ctx),
         handlers: HashMap::new(),
+        msg_stream: rx,
     };
 
-    let rt = new_runtime();
-    rt.block_on(federator.run());
-
+    new_runtime().block_on(federator.run());
     Ok(())
 }
 
 impl Federator {
-    pub(crate) async fn run(&mut self) {
-        // get a channel of messages arriving in the host client
-        let (tx, mut rx) = mpsc::channel(BUFFER_SIZE);
-        self.host_client.set_message_callback(move |_, mqtt_msg| {
-            let mqtt_msg = mqtt_msg.expect("no None message will be passed to the callback");
-
-            if let Err(err) = tx.try_send(mqtt_msg) {
-                match err {
-                    TrySendError::Full(_) => {
-                        warn!("channel is full, host client dropping messages")
-                    }
-                    TrySendError::Closed(_) => error!("host client channel was closed"),
-                }
-            }
-        });
-
-        // connections and subscriptions
-        self.connect_host_client().await;
-        self.subscribe_to_topics().await;
-        self.connect_neighbours().await;
+    pub(crate) async fn run(&mut self) -> Result<(), mqtt::Error> {
+        self.connect().await?;
 
         // start receiving messages
-        while let Some(mqtt_msg) = rx.recv().await {
-            match message::deserialize(mqtt_msg) {
-                Ok((topic, message)) => {
+        while let Ok(next) = self.msg_stream.recv().await {
+            if let Some(mqtt_msg) = next {
+                if let Ok((topic, message)) = message::deserialize(mqtt_msg) {
                     if let Some(handler) = self.handlers.get(&topic) {
-                        if let Err(err) = handler.try_send(message) {
-                            match err {
-                                TrySendError::Full(_) => {
-                                    warn!("channel is full, droping message for \"{topic}\"")
-                                }
-                                TrySendError::Closed(_) => {
-                                    error!("channel for \"{topic}\" was closed")
-                                }
+                        match handler.try_send(message) {
+                            Err(TrySendError::Full(_)) => {
+                                warn!("channel is full, droping packet for \"{topic}\"")
                             }
-                        }
-                    } else if message.is_core_ann() || message.is_beacon() {
-                        let tx = self.spawn_handler_for(&topic);
-                        if let Err(err) = tx.try_send(message) {
-                            match err {
-                                TrySendError::Full(_) => {
-                                    warn!("channel is full, droping message for \"{topic}\"")
-                                }
-                                TrySendError::Closed(_) => {
-                                    error!("channel for \"{topic}\" was closed")
-                                }
+                            Err(TrySendError::Closed(_)) => {
+                                error!("channel for \"{topic}\" was closed")
                             }
+                            Ok(_) => (),
                         }
-                        self.handlers.insert(topic.clone(), tx);
+                    } else if message.is_beacon() || message.is_core_ann() {
+                        let handler = self.spawn_handler_for(&topic);
+
+                        match handler.try_send(message) {
+                            Err(TrySendError::Full(_)) => {
+                                warn!("channel is full, droping message for \"{topic}\"")
+                            }
+                            Err(TrySendError::Closed(_)) => {
+                                error!("channel for \"{topic}\" was closed")
+                            }
+                            Ok(_) => (),
+                        }
+
+                        self.handlers.insert(topic.to_owned(), handler);
                     }
                 }
-                Err(err) => info!("unable to deserialize message: {err}"),
+            } else {
+                warn!("got disconnected from host broker");
             }
         }
-    }
-
-    async fn connect_host_client(&self) -> Result<(), mqtt::Error> {
-        let conn_opts = ConnectOptionsBuilder::new()
-            .keep_alive_interval(Duration::from_secs(60))
-            .clean_session(true)
-            .automatic_reconnect(Duration::from_secs(1), Duration::from_secs(60))
-            .finalize();
-
-        self.host_client.connect(conn_opts).await?;
 
         Ok(())
     }
 
-    async fn connect_neighbours(&self) {
-        let connect_options = ConnectOptionsBuilder::default()
-            .clean_session(true)
-            .finalize();
+    async fn connect(&self) -> Result<(), mqtt::Error> {
+        // connect to host broker
+        let topics = vec![
+            CORE_ANNS,
+            MEMB_ANNS,
+            ROUTING_TOPICS,
+            FEDERATED_TOPICS,
+            BEACONS,
+        ];
+        let opts = vec![mqtt::SubscribeOptions::new(mqtt::SUBSCRIBE_NO_LOCAL); topics.len()];
+        let qoss = vec![HOST_QOS; topics.len()];
 
-        let neighbours = self.ctx.neighbours.read().await;
-        for nbr in neighbours.values() {
-            nbr.connect(connect_options.clone());
-        }
-    }
+        self.ctx
+            .host_client
+            .connect(host_client_conn_opts())
+            .await?;
+        info!("connected to host broker");
 
-    async fn subscribe_to_topics(&self) {
-        let topics = vec![CORE_ANNS, MEMB_ANNS, FEDERATED_TOPICS, BEACONS];
-        let qoss = vec![HOST_QOS, HOST_QOS, HOST_QOS, HOST_QOS];
-        self.host_client.subscribe_many(&topics, &qoss).await;
+        self.ctx
+            .host_client
+            .subscribe_many_with_options(&topics, &qoss, &opts, None)
+            .await?;
         info!("subscribed to {:?}", topics);
+
+        // connect to neighbouring brokers
+        for (id, client) in self.ctx.neighbours.read().await.iter() {
+            if let Err(err) = client.connect(neighbor_client_conn_opts()).await {
+                warn!("cannot connect with neighboring broker {id}: {err}");
+            } else {
+                info!("connected to neighboring broker {id}");
+            }
+        }
+
+        Ok(())
     }
 
-    fn spawn_handler_for(&self, topic: &str) -> Sender<Message> {
+    fn spawn_handler_for(&self, topic: &str) -> Sender<message::Message> {
         info!("spawning new handler for \"{topic}\"");
 
         let (tx, rx) = mpsc::channel(HANDLER_BUFFER_SIZE);
@@ -172,31 +162,40 @@ fn new_runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
-fn new_host_client(uri: String, client_id: &str) -> Result<mqtt::AsyncClient, mqtt::Error> {
+fn new_host_client(uri: String) -> Result<mqtt::AsyncClient, mqtt::Error> {
     let opts = mqtt::CreateOptionsBuilder::new()
         .server_uri(uri)
-        .client_id(client_id)
         .persistence(None)
         .max_buffered_messages(0)
-        .mqtt_version(mqtt::MQTT_VERSION_DEFAULT)
+        .mqtt_version(mqtt::MQTT_VERSION_5)
         .restore_messages(false)
         .finalize();
 
-    let mut client = mqtt::AsyncClient::new(opts)?;
-
-    client.set_connected_callback(|_| info!("connected to host broker"));
-    client.set_connection_lost_callback(|_| warn!("connection to host broker lost"));
-
-    Ok(client)
+    mqtt::AsyncClient::new(opts)
 }
 
-fn create_neighbour_client(
-    config: &BrokerConfig,
-    client_id: &str,
-) -> Result<mqtt::AsyncClient, mqtt::Error> {
+fn create_neigbours_clients(configs: Vec<BrokerConfig>) -> HashMap<u32, mqtt::AsyncClient> {
+    let mut neighbours = HashMap::new();
+
+    for ngbr_conf in configs {
+        match new_neighbour_client(ngbr_conf.uri) {
+            Ok(client) => {
+                neighbours.insert(ngbr_conf.id, client);
+                ()
+            }
+            Err(err) => error!(
+                "cannot create client for neighbour broker {}: {}",
+                ngbr_conf.id, err
+            ),
+        }
+    }
+
+    neighbours
+}
+
+fn new_neighbour_client(uri: String) -> Result<mqtt::AsyncClient, mqtt::Error> {
     let opts = mqtt::CreateOptionsBuilder::new()
-        .server_uri(&config.uri)
-        .client_id(client_id)
+        .server_uri(uri)
         .persistence(None)
         .max_buffered_messages(25)
         .mqtt_version(mqtt::MQTT_VERSION_DEFAULT)
@@ -204,11 +203,19 @@ fn create_neighbour_client(
         .delete_oldest_messages(true)
         .finalize();
 
-    let mut client = mqtt::AsyncClient::new(opts)?;
+    mqtt::AsyncClient::new(opts)
+}
 
-    let id = config.id;
-    client.set_connected_callback(move |_| info!("connected to neighbour broker {}", id));
-    client.set_connection_lost_callback(move |_| warn!("connection to neighbour broker {}", id));
+fn host_client_conn_opts() -> mqtt::ConnectOptions {
+    mqtt::ConnectOptionsBuilder::new()
+        .keep_alive_interval(Duration::from_secs(60))
+        .clean_session(true)
+        .automatic_reconnect(Duration::from_secs(1), Duration::from_secs(60))
+        .finalize()
+}
 
-    Ok(client)
+fn neighbor_client_conn_opts() -> mqtt::ConnectOptions {
+    mqtt::ConnectOptionsBuilder::default()
+        .clean_session(true)
+        .finalize()
 }

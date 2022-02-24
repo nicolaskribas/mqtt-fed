@@ -9,6 +9,7 @@ pub(crate) struct FederatorConfig {
     pub(crate) redundancy: usize,
     pub(crate) core_ann_interval: u64,
     pub(crate) beacon_interval: u64,
+    pub(crate) cache_size: usize,
 }
 
 #[derive(Deserialize)]

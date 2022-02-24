@@ -7,7 +7,6 @@ mod conf;
 mod federator;
 mod handler;
 mod message;
-mod topic;
 
 fn main() {
     tracing_subscriber::fmt().without_time().init();

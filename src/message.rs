@@ -1,14 +1,35 @@
-use crate::federator::NEIGHBOURS_QOS;
-use crate::topic::*;
+use crate::federator::{Id, NEIGHBOURS_QOS};
 use core::fmt;
 use paho_mqtt as mqtt;
 use serde::{Deserialize, Serialize};
 
+pub(crate) const BEACONS: &str = "federator/beacon/#";
+const BEACON_TOPIC_LEVEL: &str = "federator/beacon/";
+
+pub(crate) const CORE_ANNS: &str = "federator/core_ann/#";
+const CORE_ANN_TOPIC_LEVEL: &str = "federator/core_ann/";
+
+pub(crate) const MEMB_ANNS: &str = "federator/memb_ann/#";
+const MEMB_ANN_TOPIC_LEVEL: &str = "federator/memb_ann/";
+
+pub(crate) const FEDERATED_TOPICS: &str = "federated/#";
+pub(crate) const FEDERATED_TOPICS_LEVEL: &str = "federated/";
+
+pub(crate) const ROUTING_TOPICS: &str = "federator/routing/#";
+const ROUTING_TOPICS_LEVEL: &str = "federator/routing/";
+
 pub(crate) enum Message {
     FederatedPub(mqtt::Message),
+    RoutedPub(RoutedPub),
     CoreAnn(CoreAnn),
     MeshMembAnn(MeshMembAnn),
     Beacon,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct RoutedPub {
+    pub id: PubId,
+    pub payload: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -29,7 +50,13 @@ pub(crate) struct MeshMembAnn {
 pub(crate) fn deserialize(mqtt_msg: mqtt::Message) -> Result<(String, Message), MessageError> {
     let topic = mqtt_msg.topic();
 
-    if let Some(topic) = topic.strip_prefix(FEDERATED_TOPICS_LEVEL) {
+    if let Some(topic) = topic.strip_prefix(ROUTING_TOPICS_LEVEL) {
+        assert_not_empty(topic)?;
+        match bincode::deserialize(mqtt_msg.payload()) {
+            Ok(routing_pub) => Ok((topic.to_owned(), Message::RoutedPub(routing_pub))),
+            Err(err) => Err(MessageError::DeserializationError(err)),
+        }
+    } else if let Some(topic) = topic.strip_prefix(FEDERATED_TOPICS_LEVEL) {
         assert_not_empty(topic)?;
         Ok((topic.to_owned(), Message::FederatedPub(mqtt_msg)))
     } else if let Some(topic) = topic.strip_prefix(CORE_ANN_TOPIC_LEVEL) {
@@ -48,7 +75,16 @@ pub(crate) fn deserialize(mqtt_msg: mqtt::Message) -> Result<(String, Message), 
         assert_not_empty(topic)?;
         Ok((topic.to_owned(), Message::Beacon))
     } else {
-        panic!("received a message from a topic it was not supposed to be subscribed to");
+        panic!("received a packet from a topic it was not supposed to be subscribed to");
+    }
+}
+
+impl RoutedPub {
+    pub(crate) fn serialize(&self, fed_topic: &str) -> mqtt::Message {
+        let topic = format!("{ROUTING_TOPICS_LEVEL}{fed_topic}");
+        let payload = bincode::serialize(self).unwrap();
+
+        mqtt::Message::new(topic, payload, NEIGHBOURS_QOS)
     }
 }
 
@@ -110,3 +146,11 @@ impl Message {
         }
     }
 }
+
+#[derive(Serialize, Deserialize, Debug, Hash, Eq, PartialEq, Clone)]
+pub(crate) struct PubId {
+    pub(crate) origin: Id,
+    pub(crate) seqn: u32,
+}
+
+impl Copy for PubId {}
