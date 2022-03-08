@@ -5,15 +5,14 @@ use crate::{
 };
 use lru::LruCache;
 use paho_mqtt as mqtt;
-use std::{
-    cmp::Ordering::*,
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::sync::{
-    mpsc::{self, error::TrySendError},
-    RwLock,
+use std::{cmp::Ordering::*, collections::HashMap, sync::Arc, time::Duration};
+use tokio::{
+    select,
+    sync::{
+        mpsc::{self, error::TrySendError},
+        RwLock,
+    },
+    time::{sleep_until, Instant},
 };
 use tracing::{debug, error, info, instrument, trace, warn};
 
@@ -65,8 +64,29 @@ pub(crate) struct TopicWorker {
 }
 
 pub(crate) async fn start(mut worker: TopicWorker) {
-    while let Some(message) = worker.receiver.recv().await {
-        worker.handle(message).await;
+    loop {
+        select! {
+            biased;
+
+            _ = sub_timeout(worker.latest_beacon, worker.ctx.beacon_interval), if matches!(worker.current_core, Some(Core::Myself(_))) => {
+                info!("no more local subs");
+                worker.current_core.take();
+            }
+
+            maybe_message = worker.receiver.recv() => {
+                if let Some(message) = maybe_message{
+                    worker.handle(message).await;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+async fn sub_timeout(latest: Option<Instant>, beacon_interval: Duration) {
+    if let Some(latest) = latest {
+        sleep_until(latest + 3 * beacon_interval).await
     }
 }
 
