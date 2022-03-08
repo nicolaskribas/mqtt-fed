@@ -2,7 +2,7 @@ use crate::federator::Id;
 use config::{Config, ConfigError, File, FileFormat};
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub(crate) struct FederatorConfig {
     pub(crate) host: BrokerConfig,
     pub(crate) neighbours: Vec<BrokerConfig>,
@@ -12,7 +12,7 @@ pub(crate) struct FederatorConfig {
     pub(crate) cache_size: usize,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub(crate) struct BrokerConfig {
     pub(crate) id: Id,
     pub(crate) uri: String,

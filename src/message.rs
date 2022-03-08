@@ -19,7 +19,7 @@ pub(crate) const ROUTING_TOPICS: &str = "federator/routing/#";
 const ROUTING_TOPICS_LEVEL: &str = "federator/routing/";
 
 pub(crate) enum Message {
-    FederatedPub(mqtt::Message),
+    FederatedPub(FederatedPub),
     RoutedPub(RoutedPub),
     CoreAnn(CoreAnn),
     MeshMembAnn(MeshMembAnn),
@@ -28,7 +28,13 @@ pub(crate) enum Message {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct RoutedPub {
-    pub id: PubId,
+    pub pub_id: PubId,
+    pub sender_id: Id,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct FederatedPub {
     pub payload: Vec<u8>,
 }
 
@@ -47,35 +53,46 @@ pub(crate) struct MeshMembAnn {
     pub sender_id: u32,
 }
 
-pub(crate) fn deserialize(mqtt_msg: mqtt::Message) -> Result<(String, Message), MessageError> {
+pub(crate) fn deserialize(mqtt_msg: &mqtt::Message) -> Result<(&str, Message), MessageError> {
     let topic = mqtt_msg.topic();
 
-    if let Some(topic) = topic.strip_prefix(ROUTING_TOPICS_LEVEL) {
-        assert_not_empty(topic)?;
+    if let Some(fededarted_topic) = topic.strip_prefix(ROUTING_TOPICS_LEVEL) {
+        assert_not_empty(fededarted_topic)?;
         match bincode::deserialize(mqtt_msg.payload()) {
-            Ok(routing_pub) => Ok((topic.to_owned(), Message::RoutedPub(routing_pub))),
+            Ok(routing_pub) => Ok((fededarted_topic, Message::RoutedPub(routing_pub))),
             Err(err) => Err(MessageError::DeserializationError(err)),
         }
-    } else if let Some(topic) = topic.strip_prefix(FEDERATED_TOPICS_LEVEL) {
-        assert_not_empty(topic)?;
-        Ok((topic.to_owned(), Message::FederatedPub(mqtt_msg)))
+    } else if let Some(federated_topic) = topic.strip_prefix(FEDERATED_TOPICS_LEVEL) {
+        assert_not_empty(federated_topic)?;
+        let federated_pub = FederatedPub {
+            payload: mqtt_msg.payload().to_owned(),
+        };
+        Ok((federated_topic, Message::FederatedPub(federated_pub)))
     } else if let Some(topic) = topic.strip_prefix(CORE_ANN_TOPIC_LEVEL) {
         assert_not_empty(topic)?;
         match bincode::deserialize(mqtt_msg.payload()) {
-            Ok(core_ann) => Ok((topic.to_owned(), Message::CoreAnn(core_ann))),
+            Ok(core_ann) => Ok((topic, Message::CoreAnn(core_ann))),
             Err(err) => Err(MessageError::DeserializationError(err)),
         }
-    } else if let Some(topic) = topic.strip_prefix(MEMB_ANN_TOPIC_LEVEL) {
-        assert_not_empty(topic)?;
+    } else if let Some(federated_topic) = topic.strip_prefix(MEMB_ANN_TOPIC_LEVEL) {
+        assert_not_empty(federated_topic)?;
         match bincode::deserialize(mqtt_msg.payload()) {
-            Ok(memb_ann) => Ok((topic.to_owned(), Message::MeshMembAnn(memb_ann))),
+            Ok(memb_ann) => Ok((federated_topic, Message::MeshMembAnn(memb_ann))),
             Err(err) => Err(MessageError::DeserializationError(err)),
         }
-    } else if let Some(topic) = topic.strip_prefix(BEACON_TOPIC_LEVEL) {
-        assert_not_empty(topic)?;
-        Ok((topic.to_owned(), Message::Beacon))
+    } else if let Some(federated_topic) = topic.strip_prefix(BEACON_TOPIC_LEVEL) {
+        assert_not_empty(federated_topic)?;
+        Ok((federated_topic, Message::Beacon))
     } else {
         panic!("received a packet from a topic it was not supposed to be subscribed to");
+    }
+}
+
+impl FederatedPub {
+    pub(crate) fn serialize(&self, fed_topic: &str) -> mqtt::Message {
+        let topic = format!("{FEDERATED_TOPICS_LEVEL}{fed_topic}");
+
+        mqtt::Message::new(topic, &*self.payload, NEIGHBOURS_QOS)
     }
 }
 
@@ -131,25 +148,9 @@ impl fmt::Display for MessageError {
 
 impl std::error::Error for MessageError {}
 
-impl Message {
-    pub(crate) fn is_core_ann(&self) -> bool {
-        match self {
-            Message::CoreAnn(_) => true,
-            _ => false,
-        }
-    }
-
-    pub(crate) fn is_beacon(&self) -> bool {
-        match self {
-            Message::Beacon => true,
-            _ => false,
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Hash, Eq, PartialEq, Clone)]
 pub(crate) struct PubId {
-    pub(crate) origin: Id,
+    pub(crate) origin_id: Id,
     pub(crate) seqn: u32,
 }
 
