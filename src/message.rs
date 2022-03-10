@@ -1,4 +1,4 @@
-use crate::federator::{Id, NEIGHBOURS_QOS};
+use crate::federator::{Id, NEIGHBORS_QOS};
 use core::fmt;
 use paho_mqtt as mqtt;
 use serde::{Deserialize, Serialize};
@@ -92,7 +92,7 @@ impl FederatedPub {
     pub(crate) fn serialize(&self, fed_topic: &str) -> mqtt::Message {
         let topic = format!("{FEDERATED_TOPICS_LEVEL}{fed_topic}");
 
-        mqtt::Message::new(topic, &*self.payload, NEIGHBOURS_QOS)
+        mqtt::Message::new(topic, &*self.payload, NEIGHBORS_QOS)
     }
 }
 
@@ -101,7 +101,7 @@ impl RoutedPub {
         let topic = format!("{ROUTING_TOPICS_LEVEL}{fed_topic}");
         let payload = bincode::serialize(self).unwrap();
 
-        mqtt::Message::new(topic, payload, NEIGHBOURS_QOS)
+        mqtt::Message::new(topic, payload, NEIGHBORS_QOS)
     }
 }
 
@@ -110,7 +110,7 @@ impl CoreAnn {
         let topic = format!("{CORE_ANN_TOPIC_LEVEL}{fed_topic}");
         let payload = bincode::serialize(self).unwrap();
 
-        mqtt::Message::new(topic, payload, NEIGHBOURS_QOS)
+        mqtt::Message::new(topic, payload, NEIGHBORS_QOS)
     }
 }
 
@@ -119,7 +119,7 @@ impl MeshMembAnn {
         let topic = format!("{MEMB_ANN_TOPIC_LEVEL}{fed_topic}");
         let payload = bincode::serialize(self).unwrap();
 
-        mqtt::Message::new(topic, payload, NEIGHBOURS_QOS)
+        mqtt::Message::new(topic, payload, NEIGHBORS_QOS)
     }
 }
 

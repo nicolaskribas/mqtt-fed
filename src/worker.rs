@@ -175,7 +175,7 @@ impl TopicWorker {
                     .filter(|p| p.id != sender_id) // except the neighbor i received from
                     .map(|p| &p.id);
 
-                send_to(routed_pub.clone(), parents, &self.ctx.neighbours).await;
+                send_to(routed_pub.clone(), parents, &self.ctx.neighbors).await;
             }
 
             // send to mesh children
@@ -186,7 +186,7 @@ impl TopicWorker {
                 .filter(|(&id, _)| id != sender_id) // except the neighbor i received from
                 .map(|(id, _)| id);
 
-            send_to(routed_pub, children, &self.ctx.neighbours).await;
+            send_to(routed_pub, children, &self.ctx.neighbors).await;
         }
     }
 
@@ -219,7 +219,7 @@ impl TopicWorker {
             if let Core::Other(core) = core {
                 let parents = core.parents.iter().map(|p| &p.id);
 
-                send_to(routed_pub.clone(), parents, &self.ctx.neighbours).await;
+                send_to(routed_pub.clone(), parents, &self.ctx.neighbors).await;
             }
 
             // send to mesh children
@@ -229,7 +229,7 @@ impl TopicWorker {
                 .filter(|(_, time)| time.elapsed() < 3 * self.ctx.core_ann_interval)
                 .map(|(id, _)| id);
 
-            send_to(routed_pub, children, &self.ctx.neighbours).await;
+            send_to(routed_pub, children, &self.ctx.neighbors).await;
         }
     }
 
@@ -444,7 +444,7 @@ impl TopicWorker {
         }
         .serialize(&self.topic);
 
-        let ngbrs = self.ctx.neighbours.read().await;
+        let ngbrs = self.ctx.neighbors.read().await;
         for (_, ngbr_client) in ngbrs.iter().filter(|(&id, _)| id != core_ann.sender_id) {
             ngbr_client.publish(my_core_ann.clone());
         }
@@ -454,10 +454,10 @@ impl TopicWorker {
 async fn send_to(
     message: mqtt::Message,
     mut ids: impl Iterator<Item = &u32>,
-    neighbours: &RwLock<HashMap<u32, mqtt::AsyncClient>>,
+    neighbors: &RwLock<HashMap<u32, mqtt::AsyncClient>>,
 ) {
     if let Some(first_id) = ids.next() {
-        let neighbor_clients = neighbours.read().await;
+        let neighbor_clients = neighbors.read().await;
 
         for id in ids {
             debug!(id, "sending");
@@ -494,7 +494,7 @@ async fn answer_parents(core: &mut CoreBroker, ctx: &Context, topic: &str) {
         }
         .serialize(topic);
 
-        let ngbrs = ctx.neighbours.read().await;
+        let ngbrs = ctx.neighbors.read().await;
         for parent in core.parents.iter_mut().filter(|p| !p.was_answered) {
             if let Some(ngbr_client) = ngbrs.get(&parent.id) {
                 ngbr_client.publish(my_memb_ann.clone());
@@ -521,11 +521,11 @@ async fn answer(core_ann: &CoreAnn, topic: &str, ctx: &Context) {
     }
     .serialize(topic);
 
-    let ngbrs = ctx.neighbours.read().await;
+    let ngbrs = ctx.neighbors.read().await;
     if let Some(sender_client) = ngbrs.get(&core_ann.sender_id) {
         sender_client.publish(my_memb_ann);
     } else {
-        warn!("{} is not a neighbour", core_ann.sender_id);
+        warn!("{} is not a neighbor", core_ann.sender_id);
     }
 }
 

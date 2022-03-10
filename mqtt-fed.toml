@@ -9,10 +9,10 @@ cache_size = 5000
 id = 1
 uri = "tcp://localhost:1881"
 
-[[neighbours]]
+[[neighbors]]
 id = 2
 uri = "tcp://localhost:1882"
 
-[[neighbours]]
+[[neighbors]]
 id = 4
 uri = "tcp://localhost:1884"

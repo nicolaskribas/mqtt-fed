@@ -10,7 +10,7 @@ use tracing::{error, info, warn};
 
 const BUFFER_SIZE: usize = 256;
 const HOST_QOS: i32 = 2;
-pub(crate) const NEIGHBOURS_QOS: i32 = 2;
+pub(crate) const NEIGHBORS_QOS: i32 = 2;
 
 pub(crate) type Id = u32;
 
@@ -20,7 +20,7 @@ pub(crate) struct Context {
     pub(crate) beacon_interval: Duration,
     pub(crate) redundancy: usize,
     pub(crate) cache_size: usize,
-    pub(crate) neighbours: RwLock<HashMap<Id, mqtt::AsyncClient>>,
+    pub(crate) neighbors: RwLock<HashMap<Id, mqtt::AsyncClient>>,
     pub(crate) host_client: mqtt::AsyncClient,
 }
 
@@ -33,7 +33,7 @@ pub(crate) struct Federator {
 pub(crate) fn run(config: FederatorConfig) -> Result<(), ()> {
     info!(?config, "starting federator");
 
-    let neighbors_clients = create_neigbours_clients(config.neighbours);
+    let neighbors_clients = create_neighbors_clients(config.neighbors);
 
     let mut host_client = new_host_client(config.host.uri)
         .map_err(|err| error!("error creating mqtt client for host broker: {err}"))?;
@@ -45,7 +45,7 @@ pub(crate) fn run(config: FederatorConfig) -> Result<(), ()> {
         core_ann_interval: Duration::from_secs(config.core_ann_interval),
         beacon_interval: Duration::from_secs(config.beacon_interval),
         redundancy: config.redundancy,
-        neighbours: RwLock::new(neighbors_clients),
+        neighbors: RwLock::new(neighbors_clients),
         cache_size: config.cache_size,
         host_client,
     };
@@ -111,8 +111,8 @@ impl Federator {
 
         info!(?topics, "subscribed to topics on host broker");
 
-        // connect to neighbouring brokers
-        for (id, client) in self.ctx.neighbours.read().await.iter() {
+        // connect to neighboring brokers
+        for (id, client) in self.ctx.neighbors.read().await.iter() {
             if let Err(err) = client.connect(neighbor_client_conn_opts()).await {
                 warn!(id, "cannot connect with neighboring broker: {err}");
             } else {
@@ -143,25 +143,25 @@ fn new_host_client(uri: String) -> Result<mqtt::AsyncClient, mqtt::Error> {
     mqtt::AsyncClient::new(opts)
 }
 
-fn create_neigbours_clients(configs: Vec<BrokerConfig>) -> HashMap<u32, mqtt::AsyncClient> {
-    let mut neighbours = HashMap::new();
+fn create_neighbors_clients(configs: Vec<BrokerConfig>) -> HashMap<u32, mqtt::AsyncClient> {
+    let mut neighbors = HashMap::new();
 
     for ngbr_conf in configs {
-        match new_neighbour_client(&ngbr_conf.uri) {
+        match new_neighbor_client(&ngbr_conf.uri) {
             Ok(client) => {
-                neighbours.insert(ngbr_conf.id, client);
+                neighbors.insert(ngbr_conf.id, client);
             }
             Err(err) => error!(
                 ?ngbr_conf,
-                "cannot create client for neighbour broker: {}", err
+                "cannot create client for neighbor broker: {}", err
             ),
         }
     }
 
-    neighbours
+    neighbors
 }
 
-fn new_neighbour_client(uri: &str) -> Result<mqtt::AsyncClient, mqtt::Error> {
+fn new_neighbor_client(uri: &str) -> Result<mqtt::AsyncClient, mqtt::Error> {
     let opts = mqtt::CreateOptionsBuilder::new()
         .server_uri(uri)
         .persistence(None)

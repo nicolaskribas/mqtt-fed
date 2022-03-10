@@ -26,9 +26,9 @@ impl Announcer {
 
                 let core_ann = ann.serialize(&topic_clone);
 
-                let neighbours = ctx.neighbours.read().await;
-                for neighbour in neighbours.values() {
-                    neighbour.publish(core_ann.clone());
+                let neighbors = ctx.neighbors.read().await;
+                for neighbor in neighbors.values() {
+                    neighbor.publish(core_ann.clone());
                 }
 
                 ann.seqn += 1;

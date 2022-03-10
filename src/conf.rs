@@ -5,7 +5,7 @@ use serde::Deserialize;
 #[derive(Deserialize, Debug)]
 pub(crate) struct FederatorConfig {
     pub(crate) host: BrokerConfig,
-    pub(crate) neighbours: Vec<BrokerConfig>,
+    pub(crate) neighbors: Vec<BrokerConfig>,
     pub(crate) redundancy: usize,
     pub(crate) core_ann_interval: u64,
     pub(crate) beacon_interval: u64,
