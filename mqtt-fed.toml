@@ -1,8 +1,9 @@
-# Example config file 
+# Example config file to a federator attached to broker with id 1, neighboring brokers with ids
+# 2 and 4
 
 redundancy = 2
-core_ann_interval = 10
-beacon_interval = 5
+core_ann_interval = 10 # 10 seconds
+beacon_interval = 5 # 5 seconds
 cache_size = 5000
 
 [host]
