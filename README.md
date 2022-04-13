@@ -9,7 +9,7 @@ Both can be installed using [Rustup](https://www.rust-lang.org/tools/install).
 
 To install mqtt-fed run: 
 ```
-cargo install https://github.com/nicolaskribas/mqtt-fed.git
+cargo install --git https://github.com/nicolaskribas/mqtt-fed.git
 ```
 
 ## Running
