@@ -10,6 +10,10 @@ mod message;
 mod worker;
 
 fn main() -> Result<(), ()> {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info")
+    }
+
     tracing_subscriber::fmt()
         .without_time()
         .with_env_filter(EnvFilter::from_default_env())
