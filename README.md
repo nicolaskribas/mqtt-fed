@@ -20,3 +20,5 @@ mqtt-fed -c mqtt-fed.toml
 ```
 Configuration files must be in the [toml format](https://toml.io), an example of configuration file
 can be found [here](mqtt-fed.toml).
+
+## [Evaluation scenario](https://github.com/nicolaskribas/federation-scenario)
