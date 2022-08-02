@@ -1,6 +1,6 @@
 # mqtt-fed
 
-A federator for MQTT brokers.
+A federator for MQTT brokers. Check out the [publication](https://thescipub.com/abstract/jcssp.2022.687.694).
 
 ## Installation
 
