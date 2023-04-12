@@ -8,9 +8,9 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-const BUFFER_SIZE: usize = 256;
-const HOST_QOS: i32 = 2;
-pub(crate) const NEIGHBORS_QOS: i32 = 2;
+const BUFFER_SIZE: usize = 10000;
+const HOST_QOS: i32 = 0;
+pub(crate) const NEIGHBORS_QOS: i32 = 0;
 
 pub(crate) type Id = u32;
 
@@ -135,7 +135,7 @@ fn new_host_client(uri: String) -> Result<mqtt::AsyncClient, mqtt::Error> {
     let opts = mqtt::CreateOptionsBuilder::new()
         .server_uri(uri)
         .persistence(None)
-        .max_buffered_messages(25)
+        .max_buffered_messages(10000)
         .mqtt_version(mqtt::MQTT_VERSION_5)
         .restore_messages(false)
         .finalize();
@@ -165,7 +165,7 @@ fn new_neighbor_client(uri: &str) -> Result<mqtt::AsyncClient, mqtt::Error> {
     let opts = mqtt::CreateOptionsBuilder::new()
         .server_uri(uri)
         .persistence(None)
-        .max_buffered_messages(25)
+        .max_buffered_messages(10000)
         .mqtt_version(mqtt::MQTT_VERSION_DEFAULT)
         .restore_messages(false)
         .delete_oldest_messages(true)

@@ -16,7 +16,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, instrument, trace, warn};
 
-const HANDLER_BUFFER_SIZE: usize = 64;
+const HANDLER_BUFFER_SIZE: usize = 10000;
 
 pub(crate) struct TopicWorkerHandle {
     federated_topic: Arc<String>,
